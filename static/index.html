@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="YouTube 點歌系統 - 線上點歌，音樂即時播放">
+    <title>🎵 Music Station - 點歌系統</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- 背景動態粒子 -->
+    <div class="bg-particles" id="bgParticles"></div>
+
+    <!-- 主容器 -->
+    <div class="app-container">
+
+        <!-- 頂部標題 -->
+        <header class="app-header">
+            <div class="logo">
+                <span class="logo-icon">🎵</span>
+                <h1>Music Station</h1>
+            </div>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">連線中...</span>
+            </div>
+        </header>
+
+        <!-- 點歌輸入區 -->
+        <section class="input-section glass-card">
+            <h2 class="section-title">🎤 點歌</h2>
+            <div class="input-group">
+                <div class="input-wrapper">
+                    <input type="text" id="urlInput" placeholder="在此貼上 YouTube 網址..."
+                           autocomplete="off" spellcheck="false">
+                    <div class="input-glow"></div>
+                </div>
+                <div class="input-row">
+                    <input type="text" id="requesterInput" placeholder="你的名字（選填）"
+                           class="name-input" maxlength="20">
+                    <button id="submitBtn" class="btn-submit" onclick="submitSong()">
+                        <span class="btn-text">點歌</span>
+                        <span class="btn-icon">➕</span>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 正在播放 -->
+        <section class="now-playing-section glass-card" id="nowPlayingSection">
+            <h2 class="section-title">🔊 正在播放</h2>
+            <div class="now-playing" id="nowPlaying">
+                <div class="np-empty">
+                    <span class="np-empty-icon">🎶</span>
+                    <p>目前沒有播放中的歌曲</p>
+                    <p class="np-empty-hint">點一首歌開始吧！</p>
+                </div>
+            </div>
+            <!-- 管理員控制列（預設隱藏） -->
+            <div class="controls hidden" id="controlsBar">
+                <div class="controls-left">
+                    <button class="ctrl-btn" id="skipBtn" onclick="skipSong()" title="跳過">
+                        ⏭️
+                    </button>
+                    <button class="ctrl-btn" id="pauseBtn" onclick="togglePause()" title="暫停/繼續">
+                        ⏸️
+                    </button>
+                </div>
+                <div class="controls-right">
+                    <span class="volume-icon">🔊</span>
+                    <input type="range" id="volumeSlider" min="0" max="150" value="80"
+                           class="volume-slider" oninput="setVolume(this.value)">
+                    <span class="volume-value" id="volumeValue">80</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 歌曲佇列 -->
+        <section class="queue-section glass-card">
+            <h2 class="section-title">
+                📋 待播清單
+                <span class="queue-count" id="queueCount">0</span>
+            </h2>
+            <div class="queue-list" id="queueList">
+                <div class="queue-empty" id="queueEmpty">
+                    <span class="queue-empty-icon">📭</span>
+                    <p>佇列是空的</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 播放紀錄 -->
+        <section class="history-section glass-card" id="historySection">
+            <h2 class="section-title">
+                📜 播放紀錄
+                <span class="history-count" id="historyCount">0</span>
+            </h2>
+            <div class="history-list" id="historyList">
+                <div class="queue-empty" id="historyEmpty">
+                    <span class="queue-empty-icon">🕐</span>
+                    <p>還沒有播放紀錄</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 在線人數 + 管理員 -->
+        <footer class="app-footer">
+            <div class="footer-row">
+                <span>🌐 線上連線數: <strong id="onlineCount">0</strong></span>
+            </div>
+            <div class="admin-area" id="adminArea">
+                <div class="admin-login-row" id="adminLoginRow">
+                    <input type="password" id="adminPassword" placeholder="管理員密碼"
+                           class="admin-input" maxlength="32">
+                    <button class="admin-btn" onclick="adminLogin()">🔒 登入</button>
+                </div>
+                <div class="admin-logged-in hidden" id="adminLoggedIn">
+                    <span class="admin-badge">✅ 管理員模式</span>
+                    <button class="admin-btn admin-btn-logout" onclick="adminLogout()">登出</button>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Toast 通知容器 -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

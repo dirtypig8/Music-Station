@@ -1,0 +1,30 @@
+# 虛擬環境
+venv/
+
+# 資料檔（執行時自動產生）
+data.json
+
+# mpv / yt-dlp 執行檔（使用者自行下載）
+mpv.exe
+mpv.com
+yt-dlp.exe
+mpv/
+installer/
+mpv-register.bat
+mpv-unregister.bat
+updater.bat
+*.7z
+doc/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
