@@ -42,6 +42,28 @@ logging.basicConfig(
 logger = logging.getLogger('MusicServer')
 
 executor = ThreadPoolExecutor(max_workers=4)
+YTDLP_TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.yt_tmp')
+LOCAL_YTDLP_EXE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yt-dlp.exe')
+
+if os.path.exists(LOCAL_YTDLP_EXE):
+    YTDLP_PATH = LOCAL_YTDLP_EXE
+
+
+def run_ytdlp(args, timeout=30):
+    """Run yt-dlp with a project-local temp directory to avoid extraction permission issues."""
+    if not os.path.exists(YTDLP_TEMP_DIR):
+        os.makedirs(YTDLP_TEMP_DIR, exist_ok=True)
+
+    env = os.environ.copy()
+    env['TMP'] = YTDLP_TEMP_DIR
+    env['TEMP'] = YTDLP_TEMP_DIR
+    return subprocess.run(
+        [YTDLP_PATH] + args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        env=env
+    )
 
 
 # ============================================================
@@ -212,12 +234,7 @@ class MpvController(object):
 def fetch_video_info(url):
     """使用 yt-dlp 執行檔取得影片資訊（在背景執行緒中呼叫）"""
     try:
-        result = subprocess.run(
-            [YTDLP_PATH, '-j', '--no-playlist', url],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30
-        )
+        result = run_ytdlp(['-j', '--no-playlist', url], timeout=30)
         if result.returncode != 0:
             logger.error("yt-dlp 失敗: %s", result.stderr.decode('utf-8', errors='replace'))
             return None
@@ -236,6 +253,44 @@ def fetch_video_info(url):
         return None
     except Exception as e:
         logger.error("取得影片資訊失敗: %s", e)
+        return None
+
+
+def search_youtube_candidates(keyword, limit=8):
+    """使用 yt-dlp 搜尋 YouTube，回傳可直接加入佇列的候選清單。"""
+    keyword = (keyword or '').strip()
+    if not keyword:
+        return []
+
+    limit = max(1, min(15, int(limit)))
+    query = 'ytsearch{}:{}'.format(limit, keyword)
+    try:
+        result = run_ytdlp(['-J', '--flat-playlist', '--no-warnings', query], timeout=30)
+        if result.returncode != 0:
+            logger.error("yt-dlp 搜尋失敗: %s", result.stderr.decode('utf-8', errors='replace'))
+            return None
+
+        payload = json.loads(result.stdout.decode('utf-8', errors='replace'))
+        entries = payload.get('entries', []) or []
+        candidates = []
+        for item in entries:
+            vid = item.get('id')
+            if not vid:
+                continue
+            candidates.append({
+                'id': vid,
+                'title': item.get('title') or '未知標題',
+                'uploader': item.get('uploader') or '',
+                'duration': item.get('duration') or 0,
+                'url': 'https://www.youtube.com/watch?v={}'.format(vid),
+                'thumbnail': 'https://i.ytimg.com/vi/{}/hqdefault.jpg'.format(vid),
+            })
+        return candidates
+    except subprocess.TimeoutExpired:
+        logger.error("yt-dlp 搜尋逾時")
+        return None
+    except Exception as e:
+        logger.error("搜尋 YouTube 失敗: %s", e)
         return None
 
 
@@ -464,6 +519,8 @@ class MusicWebSocket(tornado.websocket.WebSocketHandler):
 
         if msg_type == 'add_song':
             yield self._handle_add_song(msg)
+        elif msg_type == 'search_youtube':
+            yield self._handle_search_youtube(msg)
         elif msg_type == 'admin_login':
             self._handle_admin_login(msg)
         elif msg_type == 'admin_logout':
@@ -569,6 +626,30 @@ class MusicWebSocket(tornado.websocket.WebSocketHandler):
             'data': info
         })
         broadcast_state()
+
+    @tornado.gen.coroutine
+    def _handle_search_youtube(self, msg):
+        keyword = msg.get('keyword', '').strip()
+        if not keyword:
+            self.write_message(json.dumps({
+                'type': 'error', 'message': '請輸入搜尋關鍵字'
+            }))
+            return
+
+        io_loop = tornado.ioloop.IOLoop.current()
+        candidates = yield io_loop.run_in_executor(executor, search_youtube_candidates, keyword, 8)
+
+        if candidates is None:
+            self.write_message(json.dumps({
+                'type': 'error', 'message': '搜尋失敗，請稍後再試'
+            }))
+            return
+
+        self.write_message(json.dumps({
+            'type': 'search_results',
+            'keyword': keyword,
+            'data': candidates
+        }, ensure_ascii=False))
 
 
 # ============================================================

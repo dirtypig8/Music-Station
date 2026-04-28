@@ -47,6 +47,15 @@
                     </button>
                 </div>
             </div>
+            <div class="search-box">
+                <div class="search-row">
+                    <input type="text" id="searchInput" class="search-input"
+                           placeholder="或直接搜尋 YouTube 關鍵字（例：周杰倫 稻香）"
+                           autocomplete="off" spellcheck="false">
+                    <button id="searchBtn" class="search-btn" onclick="searchYouTube()">搜尋</button>
+                </div>
+                <div class="search-results hidden" id="searchResults"></div>
+            </div>
         </section>
 
         <!-- 正在播放 -->

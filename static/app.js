@@ -20,10 +20,14 @@
     var reconnectTimer = null;
     var reconnectDelay = 1000;
     var isAdmin = false;
+    var searchResults = [];
 
     // ---------- DOM 元素 ----------
     var $urlInput = document.getElementById('urlInput');
     var $requesterInput = document.getElementById('requesterInput');
+    var $searchInput = document.getElementById('searchInput');
+    var $searchBtn = document.getElementById('searchBtn');
+    var $searchResults = document.getElementById('searchResults');
     var $submitBtn = document.getElementById('submitBtn');
     var $nowPlaying = document.getElementById('nowPlaying');
     var $queueList = document.getElementById('queueList');
@@ -129,9 +133,15 @@
             case 'error':
                 showToast('❌ ' + msg.message, 'error');
                 enableSubmit();
+                enableSearch();
                 break;
             case 'info':
                 showToast('ℹ️ ' + msg.message, 'info');
+                break;
+            case 'search_results':
+                searchResults = msg.data || [];
+                renderSearchResults(msg.keyword || '');
+                enableSearch();
                 break;
             case 'admin_status':
                 isAdmin = msg.is_admin;
@@ -297,6 +307,52 @@
     }
 
     // ---------- 操作 ----------
+    function searchYouTube() {
+        var keyword = ($searchInput.value || '').trim();
+        if (!keyword) {
+            showToast('❌ 請輸入搜尋關鍵字', 'error');
+            $searchInput.focus();
+            return;
+        }
+        disableSearch();
+        sendMsg({ type: 'search_youtube', keyword: keyword });
+    }
+
+    function renderSearchResults(keyword) {
+        if (!searchResults.length) {
+            $searchResults.classList.remove('hidden');
+            $searchResults.innerHTML =
+                '<div class="search-empty">找不到結果：' + escapeHtml(keyword) + '</div>';
+            return;
+        }
+
+        var html = '<div class="search-results-title">搜尋結果：' + escapeHtml(keyword) + '</div>';
+        for (var i = 0; i < searchResults.length; i++) {
+            var item = searchResults[i];
+            var thumbTag = item.thumbnail
+                ? '<img class="sr-thumb" src="' + escapeHtml(item.thumbnail) + '" alt="">'
+                : '<div class="sr-thumb"></div>';
+            html +=
+                '<button type="button" class="search-item" onclick="addSearchResult(' + i + ')">' +
+                '  ' + thumbTag +
+                '  <span class="sr-info">' +
+                '    <span class="sr-title">' + escapeHtml(item.title || '未知標題') + '</span>' +
+                '    <span class="sr-meta">' + escapeHtml(item.uploader || '未知頻道') + ' · ' + formatTime(item.duration || 0) + '</span>' +
+                '  </span>' +
+                '  <span class="sr-add">加入</span>' +
+                '</button>';
+        }
+        $searchResults.classList.remove('hidden');
+        $searchResults.innerHTML = html;
+    }
+
+    function addSearchResult(index) {
+        var item = searchResults[index];
+        if (!item || !item.url) return;
+        $urlInput.value = item.url;
+        submitSong();
+    }
+
     function submitSong() {
         var url = $urlInput.value.trim();
         if (!url) {
@@ -314,6 +370,8 @@
 
         sendMsg({ type: 'add_song', url: url, requester: requester });
         $urlInput.value = '';
+        $searchResults.classList.add('hidden');
+        searchResults = [];
         disableSubmit();
 
         // 3 秒後自動恢復按鈕
@@ -349,6 +407,16 @@
     function enableSubmit() {
         $submitBtn.disabled = false;
         $submitBtn.querySelector('.btn-text').textContent = '點歌';
+    }
+
+    function disableSearch() {
+        $searchBtn.disabled = true;
+        $searchBtn.textContent = '搜尋中...';
+    }
+
+    function enableSearch() {
+        $searchBtn.disabled = false;
+        $searchBtn.textContent = '搜尋';
     }
 
     // ---------- YouTube URL 驗證 ----------
@@ -425,6 +493,12 @@
         }
     });
 
+    $searchInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            searchYouTube();
+        }
+    });
+
     $adminPassword.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') {
             adminLogin();
@@ -433,6 +507,8 @@
 
     // ---------- 全域函式 (供 HTML onclick 使用) ----------
     window.submitSong = submitSong;
+    window.searchYouTube = searchYouTube;
+    window.addSearchResult = addSearchResult;
     window.skipSong = skipSong;
     window.togglePause = togglePause;
     window.setVolume = setVolume;
