@@ -45,6 +45,7 @@
     var $adminLoginRow = document.getElementById('adminLoginRow');
     var $adminLoggedIn = document.getElementById('adminLoggedIn');
     var $adminPassword = document.getElementById('adminPassword');
+    var $shareUrl = document.getElementById('shareUrl');
 
     // ---------- 背景粒子 ----------
     function initParticles() {
@@ -458,6 +459,21 @@
         return div.innerHTML;
     }
 
+    function loadAccessInfo() {
+        if (!$shareUrl || !window.fetch) return;
+        fetch('/api/access-info')
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (!data || !data.url) return;
+                $shareUrl.href = data.url;
+                $shareUrl.textContent = data.url;
+            })
+            .catch(function () {
+                $shareUrl.textContent = location.origin;
+                $shareUrl.href = location.origin;
+            });
+    }
+
     // ---------- 管理員 ----------
     function adminLogin() {
         var pwd = $adminPassword.value.trim();
@@ -518,6 +534,7 @@
 
     // ---------- 初始化 ----------
     initParticles();
+    loadAccessInfo();
     connectWS();
 
 })();
