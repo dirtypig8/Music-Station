@@ -557,10 +557,6 @@ class SongQueue(object):
                 return True
             return True  # 狀態有變化（從播放變為閒置）
 
-        if self.now_playing:
-            pos = self.mpv.get_time_pos()
-            if pos is not None:
-                logger.info("mpv time-pos: %.2f", float(pos))
         return False
 
     def get_state(self):
