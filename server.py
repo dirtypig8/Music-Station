@@ -15,8 +15,12 @@ import subprocess
 import ctypes
 import ctypes.wintypes
 import threading
+import socket
+import io
 from concurrent.futures import ThreadPoolExecutor
 
+import qrcode
+import qrcode.image.svg
 import tornado.ioloop
 import tornado.web
 import tornado.websocket
@@ -33,6 +37,7 @@ YTDLP_PATH = 'yt-dlp'  # 假設 yt-dlp 在 PATH 中
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.json')
 ADMIN_PASSWORD = 'admin'  # 管理員密碼，請自行修改
 MAX_DURATION_MINUTES = 10  # 歌曲最長限制（分鐘），設 0 表示不限制
+PUBLIC_BASE_URL = os.environ.get('MUSIC_STATION_URL', '').strip().rstrip('/')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +52,27 @@ LOCAL_YTDLP_EXE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yt-d
 
 if os.path.exists(LOCAL_YTDLP_EXE):
     YTDLP_PATH = LOCAL_YTDLP_EXE
+
+
+def get_lan_ip():
+    """Return the best LAN IP for QR sharing."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(('8.8.8.8', 80))
+        return sock.getsockname()[0]
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return '127.0.0.1'
+    finally:
+        sock.close()
+
+
+def get_public_url():
+    if PUBLIC_BASE_URL:
+        return PUBLIC_BASE_URL
+    return 'http://{}:{}'.format(get_lan_ip(), PORT)
 
 
 def run_ytdlp(args, timeout=30):
@@ -481,6 +507,30 @@ class MainHandler(tornado.web.RequestHandler):
         self.render("static/index.html")
 
 
+class AccessInfoHandler(tornado.web.RequestHandler):
+    def get(self):
+        self.set_header('Content-Type', 'application/json; charset=utf-8')
+        self.write(json.dumps({
+            'url': get_public_url(),
+        }, ensure_ascii=False))
+
+
+class QrCodeHandler(tornado.web.RequestHandler):
+    def get(self):
+        url = get_public_url()
+        image = qrcode.make(
+            url,
+            image_factory=qrcode.image.svg.SvgPathImage,
+            box_size=8,
+            border=2,
+        )
+        output = io.BytesIO()
+        image.save(output)
+        self.set_header('Content-Type', 'image/svg+xml; charset=utf-8')
+        self.set_header('Cache-Control', 'no-store')
+        self.write(output.getvalue())
+
+
 class MusicWebSocket(tornado.websocket.WebSocketHandler):
     def check_origin(self, origin):
         return True  # 允許所有來源（區域網路使用）
@@ -673,6 +723,8 @@ def make_app():
     return tornado.web.Application(
         [
             (r"/", MainHandler),
+            (r"/api/access-info", AccessInfoHandler),
+            (r"/qr.svg", QrCodeHandler),
             (r"/ws", MusicWebSocket),
         ],
         template_path=base_dir,
@@ -698,7 +750,7 @@ def main():
     app = make_app()
     app.listen(PORT)
     logger.info("伺服器已啟動: http://localhost:%d", PORT)
-    logger.info("區域網路存取: http://<你的IP>:%d", PORT)
+    logger.info("區域網路存取: %s", get_public_url())
     logger.info("按 Ctrl+C 停止伺服器")
 
     # 設定定時輪詢（每 2 秒）
