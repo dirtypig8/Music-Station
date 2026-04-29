@@ -863,6 +863,21 @@ body {
     gap: 10px;
 }
 
+.hi-readd {
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    background: rgba(168, 85, 247, 0.12);
+    color: var(--text-primary);
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 0.72rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.hi-readd:hover {
+    background: rgba(168, 85, 247, 0.24);
+}
+
 /* ---------- Footer ---------- */
 .app-footer {
     text-align: center;

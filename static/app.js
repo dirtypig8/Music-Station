@@ -280,9 +280,26 @@
                 '      <span>' + formatTime(song.duration) + '</span>' +
                 '    </div>' +
                 '  </div>' +
+                '  <button class="hi-readd" onclick="readdHistorySong(' + i + ')">再加入</button>' +
                 '</div>';
         }
         $historyList.innerHTML = html;
+    }
+
+    function readdHistorySong(index) {
+        var history = state.history || [];
+        var song = history[index];
+        if (!song || !song.url) {
+            showToast('❌ 找不到可加入的歌曲來源', 'error');
+            return;
+        }
+
+        sendMsg({
+            type: 'add_song',
+            url: song.url,
+            requester: ($requesterInput.value || '').trim() || song.requester || '匿名'
+        });
+        showToast('✅ 已重新加入待播：' + (song.title || '未知標題'), 'success');
     }
 
     function renderControls() {
@@ -509,6 +526,7 @@
     window.submitSong = submitSong;
     window.searchYouTube = searchYouTube;
     window.addSearchResult = addSearchResult;
+    window.readdHistorySong = readdHistorySong;
     window.skipSong = skipSong;
     window.togglePause = togglePause;
     window.setVolume = setVolume;
