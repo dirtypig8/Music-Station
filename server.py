@@ -12,6 +12,9 @@ import time
 import uuid
 import logging
 import subprocess
+import configparser
+import shlex
+import atexit
 import ctypes
 import ctypes.wintypes
 import threading
@@ -33,8 +36,11 @@ import tornado.gen
 PORT = 8888
 MPV_PIPE = r'\\.\pipe\mpv-music-server'
 MPV_PATH = 'mpv'       # 假設 mpv 在 PATH 中
-YTDLP_PATH = 'yt-dlp'  # 假設 yt-dlp 在 PATH 中
-DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.json')
+YTDLP_PATH = 'yt-dlp'
+YTDLP_CMD = ''  # 假設 yt-dlp 在 PATH 中
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE_DIR, 'config.ini')
+DATA_FILE = os.path.join(BASE_DIR, 'data.json')
 ADMIN_PASSWORD = 'admin'  # 管理員密碼，請自行修改
 MAX_DURATION_MINUTES = 10  # 歌曲最長限制（分鐘），設 0 表示不限制
 PUBLIC_BASE_URL = os.environ.get('MUSIC_STATION_URL', '').strip().rstrip('/')
@@ -47,8 +53,7 @@ logging.basicConfig(
 logger = logging.getLogger('MusicServer')
 
 executor = ThreadPoolExecutor(max_workers=4)
-YTDLP_TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.yt_tmp')
-LOCAL_YTDLP_EXE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yt-dlp.exe')
+LOCAL_YTDLP_EXE = os.path.join(BASE_DIR, 'yt-dlp.exe')
 
 if os.path.exists(LOCAL_YTDLP_EXE):
     YTDLP_PATH = LOCAL_YTDLP_EXE
@@ -74,21 +79,45 @@ def get_public_url():
         return PUBLIC_BASE_URL
     return 'http://{}:{}'.format(get_lan_ip(), PORT)
 
+def load_config():
+    global PORT, MPV_PIPE, MPV_PATH, YTDLP_PATH, YTDLP_CMD, ADMIN_PASSWORD, MAX_DURATION_MINUTES
+
+    if not os.path.exists(CONFIG_FILE):
+        return
+
+    cfg = configparser.ConfigParser()
+    cfg.read(CONFIG_FILE, encoding='utf-8')
+
+    if cfg.has_section('server'):
+        PORT = cfg.getint('server', 'port', fallback=PORT)
+        MPV_PIPE = cfg.get('server', 'mpv_pipe', fallback=MPV_PIPE)
+        ADMIN_PASSWORD = cfg.get('server', 'admin_password', fallback=ADMIN_PASSWORD)
+        MAX_DURATION_MINUTES = cfg.getint('server', 'max_duration_minutes', fallback=MAX_DURATION_MINUTES)
+
+    if cfg.has_section('paths'):
+        MPV_PATH = cfg.get('paths', 'mpv_path', fallback=MPV_PATH).strip() or MPV_PATH
+        YTDLP_PATH = cfg.get('paths', 'ytdlp_path', fallback=YTDLP_PATH).strip() or YTDLP_PATH
+        YTDLP_CMD = cfg.get('paths', 'ytdlp_cmd', fallback='').strip()
+
 
 def run_ytdlp(args, timeout=30):
-    """Run yt-dlp with a project-local temp directory to avoid extraction permission issues."""
-    if not os.path.exists(YTDLP_TEMP_DIR):
-        os.makedirs(YTDLP_TEMP_DIR, exist_ok=True)
+    """Run yt-dlp with system default temp/environment."""
+    if YTDLP_CMD:
+        cmd_parts = shlex.split(YTDLP_CMD, posix=False)
+        if not cmd_parts:
+            cmd_parts = [YTDLP_PATH]
+        return subprocess.run(
+            cmd_parts + args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
 
-    env = os.environ.copy()
-    env['TMP'] = YTDLP_TEMP_DIR
-    env['TEMP'] = YTDLP_TEMP_DIR
     return subprocess.run(
         [YTDLP_PATH] + args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,
-        env=env
     )
 
 
@@ -126,12 +155,11 @@ class MpvController(object):
         ]
 
         try:
-            # DETACHED_PROCESS = 0x00000008
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=0x00000008
+                creationflags=0
             )
             time.sleep(2)
             logger.info("mpv 已啟動 (PID: %d)", self.process.pid)
@@ -258,29 +286,43 @@ class MpvController(object):
 # yt-dlp 影片資訊擷取
 # ============================================================
 def fetch_video_info(url):
-    """使用 yt-dlp 執行檔取得影片資訊（在背景執行緒中呼叫）"""
+    """?? yt-dlp ???????????????????????"""
     try:
         result = run_ytdlp(['-j', '--no-playlist', url], timeout=30)
         if result.returncode != 0:
-            logger.error("yt-dlp 失敗: %s", result.stderr.decode('utf-8', errors='replace'))
+            logger.error("yt-dlp ??: %s", result.stderr.decode('utf-8', errors='replace'))
             return None
 
         info = json.loads(result.stdout.decode('utf-8', errors='replace'))
+        playback_url = ''
+        direct = run_ytdlp(['-f', 'bestaudio', '-g', '--no-playlist', url], timeout=30)
+        if direct.returncode == 0:
+            lines = direct.stdout.decode('utf-8', errors='replace').strip().splitlines()
+            if lines:
+                playback_url = lines[0]
+        else:
+            logger.error("yt-dlp -g failed: %s", direct.stderr.decode('utf-8', errors='replace'))
+
+        if playback_url:
+            logger.info("playback_url ready (len=%d)", len(playback_url))
+        else:
+            logger.warning("playback_url missing, fallback to page url")
+
         return {
             'id': str(uuid.uuid4())[:8],
             'url': url,
-            'title': info.get('title', '未知標題'),
+            'playback_url': playback_url or url,
+            'title': info.get('title', '????'),
             'duration': info.get('duration', 0),
             'thumbnail': info.get('thumbnail', ''),
             'uploader': info.get('uploader', ''),
         }
     except subprocess.TimeoutExpired:
-        logger.error("yt-dlp 逾時")
+        logger.error("yt-dlp ??")
         return None
     except Exception as e:
-        logger.error("取得影片資訊失敗: %s", e)
+        logger.error("????????: %s", e)
         return None
-
 
 def search_youtube_candidates(keyword, limit=8):
     """使用 yt-dlp 搜尋 YouTube，回傳可直接加入佇列的候選清單。"""
@@ -404,7 +446,7 @@ class SongQueue(object):
         self.mpv.set_volume(vol)
 
     def play_next(self):
-        """播放佇列中的下一首歌"""
+        """??????????"""
         with self._lock:
             if not self.queue:
                 self.now_playing = None
@@ -412,11 +454,21 @@ class SongQueue(object):
             self.now_playing = self.queue.pop(0)
             self.is_paused = False
 
-        url = self.now_playing['url']
-        logger.info("開始播放: %s", self.now_playing['title'])
-        self.mpv.loadfile(url)
+        url = self.now_playing.get('playback_url') or self.now_playing['url']
+        logger.info("????: %s", self.now_playing['title'])
+        ok = self.mpv.loadfile(url)
+        logger.info("mpv loadfile: %s", ok)
+        if not ok:
+            logger.error("mpv loadfile failed for: %s", self.now_playing['title'])
+            with self._lock:
+                self.queue.insert(0, self.now_playing)
+                self.now_playing = None
+            return False
+        resume_ok = self.mpv.resume()
+        logger.info("mpv resume: %s", resume_ok)
         self._save()
         return True
+
 
     def check_and_play_next(self):
         """檢查目前是否播完，若是則播下一首"""
@@ -435,6 +487,11 @@ class SongQueue(object):
                 self.play_next()
                 return True
             return True  # 狀態有變化（從播放變為閒置）
+
+        if self.now_playing:
+            pos = self.mpv.get_time_pos()
+            if pos is not None:
+                logger.info("mpv time-pos: %.2f", float(pos))
         return False
 
     def get_state(self):
@@ -460,8 +517,19 @@ class SongQueue(object):
 # ============================================================
 # 全域實例
 # ============================================================
-mpv_ctrl = MpvController()
+load_config()
+mpv_ctrl = MpvController(mpv_path=MPV_PATH, pipe_name=MPV_PIPE)
 song_queue = SongQueue(mpv_ctrl)
+
+
+def _cleanup_mpv():
+    try:
+        mpv_ctrl.stop_process()
+    except Exception:
+        pass
+
+
+atexit.register(_cleanup_mpv)
 
 
 # ============================================================
@@ -737,6 +805,8 @@ def main():
     logger.info("=" * 50)
     logger.info("  🎵 YouTube 點歌系統")
     logger.info("=" * 50)
+    logger.info("mpv path: %s", MPV_PATH)
+    logger.info("yt-dlp path: %s", YTDLP_PATH)
 
     # 啟動 mpv
     if not mpv_ctrl.start():
