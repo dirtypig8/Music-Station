@@ -30,6 +30,42 @@ import tornado.websocket
 import tornado.escape
 import tornado.gen
 
+class IO_COUNTERS(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+
+class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", ctypes.c_uint32),
+        ("MinimumWorkingSetSize", ctypes.c_void_p),
+        ("MaximumWorkingSetSize", ctypes.c_void_p),
+        ("ActiveProcessLimit", ctypes.c_uint32),
+        ("Affinity", ctypes.c_void_p),
+        ("PriorityClass", ctypes.c_uint32),
+        ("SchedulingClass", ctypes.c_uint32),
+    ]
+
+
+class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_void_p),
+        ("JobMemoryLimit", ctypes.c_void_p),
+        ("PeakProcessMemoryUsed", ctypes.c_void_p),
+        ("PeakJobMemoryUsed", ctypes.c_void_p),
+    ]
+
+
 # ============================================================
 # 設定
 # ============================================================
@@ -130,14 +166,43 @@ class MpvController(object):
     GENERIC_READ = 0x80000000
     GENERIC_WRITE = 0x40000000
     OPEN_EXISTING = 3
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    JobObjectExtendedLimitInformation = 9
 
     def __init__(self, mpv_path=MPV_PATH, pipe_name=MPV_PIPE):
         self.mpv_path = mpv_path
         self.pipe_name = pipe_name
         self.process = None
+        self._job = None
         self._lock = threading.Lock()
         self._k32 = ctypes.windll.kernel32
         self._k32.CreateFileW.restype = ctypes.c_void_p
+
+    def _bind_process_to_job(self):
+        if not self.process:
+            return
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = self.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        h_job = self._k32.CreateJobObjectW(None, None)
+        if not h_job:
+            return
+        ok = self._k32.SetInformationJobObject(
+            ctypes.c_void_p(h_job),
+            self.JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info)
+        )
+        if not ok:
+            self._k32.CloseHandle(ctypes.c_void_p(h_job))
+            return
+        ok = self._k32.AssignProcessToJobObject(
+            ctypes.c_void_p(h_job),
+            ctypes.c_void_p(int(self.process._handle))
+        )
+        if not ok:
+            self._k32.CloseHandle(ctypes.c_void_p(h_job))
+            return
+        self._job = h_job
 
     def start(self):
         """啟動 mpv（idle 模式）"""
@@ -161,6 +226,7 @@ class MpvController(object):
                 stderr=subprocess.DEVNULL,
                 creationflags=0
             )
+            self._bind_process_to_job()
             time.sleep(2)
             logger.info("mpv 已啟動 (PID: %d)", self.process.pid)
             return True
@@ -179,6 +245,9 @@ class MpvController(object):
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.process.kill()
+        if self._job:
+            self._k32.CloseHandle(ctypes.c_void_p(self._job))
+            self._job = None
         self.process = None
 
     def _ipc(self, command):
