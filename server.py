@@ -29,6 +29,7 @@ import tornado.web
 import tornado.websocket
 import tornado.escape
 import tornado.gen
+import tornado.httpclient
 
 class IO_COUNTERS(ctypes.Structure):
     _fields_ = [
@@ -576,6 +577,7 @@ class SongQueue(object):
             'duration': duration,
             'volume': self.mpv.get_volume(),
             'online_count': len(WebSocketClients.clients),
+            'web_stream_url': '/api/audio-stream' if (self.now_playing and self.now_playing.get('playback_url')) else '',
         }
 
 
@@ -662,6 +664,76 @@ class QrCodeHandler(tornado.web.RequestHandler):
         self.set_header('Content-Type', 'image/svg+xml; charset=utf-8')
         self.set_header('Cache-Control', 'no-store')
         self.write(output.getvalue())
+
+
+class AudioStreamHandler(tornado.web.RequestHandler):
+    """將 YouTube 音訊串流代理給瀏覽器端播放"""
+
+    @tornado.gen.coroutine
+    def get(self):
+        if not song_queue.now_playing:
+            self.set_status(404)
+            self.write('{"error":"no song playing"}')
+            return
+
+        playback_url = song_queue.now_playing.get('playback_url', '')
+        if not playback_url:
+            self.set_status(404)
+            self.write('{"error":"no stream url"}')
+            return
+
+        # 建立對 YouTube 的請求標頭
+        req_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/120.0.0.0 Safari/537.36',
+        }
+        # 轉發 Range 標頭（支援 seek）
+        range_header = self.request.headers.get('Range')
+        if range_header:
+            req_headers['Range'] = range_header
+
+        http_client = tornado.httpclient.AsyncHTTPClient()
+
+        def on_header(header_line):
+            """逐行轉發上游回應標頭"""
+            header_line = header_line.strip()
+            if not header_line:
+                return
+            if header_line.startswith('HTTP/'):
+                code = int(header_line.split()[1])
+                self.set_status(code)
+                return
+            if ':' in header_line:
+                name, _, value = header_line.partition(':')
+                name = name.strip()
+                value = value.strip()
+                if name.lower() in ('content-type', 'content-length',
+                                    'content-range', 'accept-ranges'):
+                    self.set_header(name, value)
+
+        def on_chunk(chunk):
+            """逐塊轉發音訊資料"""
+            self.write(chunk)
+            self.flush()
+
+        try:
+            request = tornado.httpclient.HTTPRequest(
+                playback_url,
+                method='GET',
+                headers=req_headers,
+                header_callback=on_header,
+                streaming_callback=on_chunk,
+                request_timeout=600,
+                connect_timeout=15,
+            )
+            yield http_client.fetch(request)
+            self.finish()
+        except Exception as e:
+            logger.error("音訊串流代理錯誤: %s", e)
+            if not self._finished:
+                self.set_status(502)
+                self.finish()
 
 
 class MusicWebSocket(tornado.websocket.WebSocketHandler):
@@ -842,7 +914,8 @@ def poll_playback_status():
     """每 2 秒檢查播放狀態"""
     try:
         changed = song_queue.check_and_play_next()
-        if changed:
+        # 有歌曲正在播放時，定期廣播進度更新（time_pos / duration）
+        if changed or song_queue.now_playing is not None:
             broadcast_state()
     except Exception as e:
         logger.error("輪詢錯誤: %s", e)
@@ -857,6 +930,7 @@ def make_app():
         [
             (r"/", MainHandler),
             (r"/api/access-info", AccessInfoHandler),
+            (r"/api/audio-stream", AudioStreamHandler),
             (r"/qr.svg", QrCodeHandler),
             (r"/ws", MusicWebSocket),
         ],

@@ -15,12 +15,20 @@
         volume: 80,
         time_pos: null,
         duration: null,
-        online_count: 0
+        online_count: 0,
+        web_stream_url: ''
     };
     var reconnectTimer = null;
     var reconnectDelay = 1000;
     var isAdmin = false;
     var searchResults = [];
+
+    // ---------- 瀏覽器收聽 ----------
+    var audioPlayer = null;
+    var isListening = false;
+    var currentStreamSongId = null;
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var listenVolume = 80;
 
     // ---------- DOM 元素 ----------
     var $urlInput = document.getElementById('urlInput');
@@ -46,6 +54,12 @@
     var $adminLoggedIn = document.getElementById('adminLoggedIn');
     var $adminPassword = document.getElementById('adminPassword');
     var $shareUrl = document.getElementById('shareUrl');
+    var $listenBtn = document.getElementById('listenBtn');
+    var $listenIcon = document.getElementById('listenIcon');
+    var $listenText = document.getElementById('listenText');
+    var $listenVolumeWrap = document.getElementById('listenVolumeWrap');
+    var $listenVolumeSlider = document.getElementById('listenVolumeSlider');
+    var $listenVolumeValue = document.getElementById('listenVolumeValue');
 
     // ---------- 背景粒子 ----------
     function initParticles() {
@@ -127,6 +141,7 @@
             case 'state_update':
                 state = msg.data;
                 renderAll();
+                syncAudio();
                 break;
             case 'song_added':
                 showToast('🎵 已加入: ' + msg.data.title, 'success');
@@ -161,6 +176,7 @@
         renderQueue();
         renderHistory();
         renderControls();
+        renderListenUI();
     }
 
     function formatTime(seconds) {
@@ -322,6 +338,122 @@
         }
         // 更新線上人數
         $onlineCount.textContent = state.online_count || 0;
+    }
+
+    // ---------- 瀏覽器收聽功能 ----------
+    function toggleListening() {
+        if (isListening) {
+            stopListening();
+        } else {
+            startListening();
+        }
+    }
+
+    function startListening() {
+        isListening = true;
+        if (!audioPlayer) {
+            audioPlayer = new Audio();
+            audioPlayer.volume = listenVolume / 100;
+        }
+        renderListenUI();
+        syncAudio();
+        showToast('🎧 已開啟瀏覽器收聽', 'success');
+    }
+
+    function stopListening() {
+        isListening = false;
+        currentStreamSongId = null;
+        if (audioPlayer) {
+            audioPlayer.pause();
+            audioPlayer.removeAttribute('src');
+            audioPlayer.load();
+        }
+        renderListenUI();
+        showToast('🔇 已關閉瀏覽器收聽', 'info');
+    }
+
+    function syncAudio() {
+        if (!isListening || !audioPlayer) return;
+
+        // 沒有正在播放的歌 → 靜音
+        if (!state.now_playing || !state.web_stream_url) {
+            if (audioPlayer.src) {
+                audioPlayer.pause();
+                audioPlayer.removeAttribute('src');
+                audioPlayer.load();
+                currentStreamSongId = null;
+            }
+            return;
+        }
+
+        var songId = state.now_playing.id;
+
+        // 歌曲切換 → 載入新音訊
+        if (currentStreamSongId !== songId) {
+            currentStreamSongId = songId;
+            // 加上時間戳避免快取
+            audioPlayer.src = state.web_stream_url + '?sid=' + songId + '&t=' + Date.now();
+            audioPlayer.load();
+            // 嘗試 seek 到目前位置
+            if (state.time_pos != null && state.time_pos > 2) {
+                audioPlayer.addEventListener('loadedmetadata', function seekOnce() {
+                    audioPlayer.removeEventListener('loadedmetadata', seekOnce);
+                    try { audioPlayer.currentTime = state.time_pos; } catch(e) {}
+                });
+            }
+            audioPlayer.play().catch(function (e) {
+                console.warn('自動播放被阻擋，請點擊收聽按鈕:', e);
+                showToast('⚠️ 瀏覽器阻擋自動播放，請再點一次收聽按鈕', 'error');
+            });
+            return;
+        }
+
+        // 暫停/繼續 同步
+        if (state.is_paused) {
+            if (!audioPlayer.paused) audioPlayer.pause();
+        } else {
+            if (audioPlayer.paused && audioPlayer.src) {
+                audioPlayer.play().catch(function () {});
+            }
+        }
+
+        // 進度同步（偏差超過 5 秒才修正，避免頻繁 seek）
+        if (state.time_pos != null && !isNaN(audioPlayer.currentTime) && audioPlayer.currentTime > 0) {
+            var drift = Math.abs(audioPlayer.currentTime - state.time_pos);
+            if (drift > 5) {
+                try { audioPlayer.currentTime = state.time_pos; } catch(e) {}
+            }
+        }
+    }
+
+    function setListenVolume(val) {
+        listenVolume = parseInt(val);
+        if ($listenVolumeValue) $listenVolumeValue.textContent = val;
+        if (audioPlayer) {
+            audioPlayer.volume = listenVolume / 100;
+        }
+    }
+
+    function renderListenUI() {
+        if (!$listenBtn) return;
+
+        if (isListening) {
+            $listenBtn.classList.add('listening');
+            $listenIcon.textContent = '🔊';
+            $listenText.textContent = '收聽中';
+            if (isIOS) {
+                // iOS 不支援 JS 控制音量，顯示提示
+                $listenVolumeWrap.classList.remove('hidden');
+                $listenVolumeWrap.innerHTML = '<span class="listen-ios-hint">📱 請使用手機音量鍵調整音量</span>';
+            } else {
+                $listenVolumeWrap.classList.remove('hidden');
+            }
+        } else {
+            $listenBtn.classList.remove('listening');
+            $listenIcon.textContent = '🎧';
+            $listenText.textContent = '點擊收聽';
+            $listenVolumeWrap.classList.add('hidden');
+        }
     }
 
     // ---------- 操作 ----------
@@ -549,6 +681,8 @@
     window.removeSong = removeSong;
     window.adminLogin = adminLogin;
     window.adminLogout = adminLogout;
+    window.toggleListening = toggleListening;
+    window.setListenVolume = setListenVolume;
 
     // ---------- 初始化 ----------
     initParticles();

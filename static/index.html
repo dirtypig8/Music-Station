@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=20260430a">
+    <link rel="stylesheet" href="/static/style.css?v=20260503a">
 </head>
 <body>
     <!-- 背景動態粒子 -->
@@ -85,6 +85,19 @@
                     <span class="volume-value" id="volumeValue">80</span>
                 </div>
             </div>
+            <!-- 瀏覽器收聽區塊 -->
+            <div class="web-listen-bar" id="webListenBar">
+                <button class="listen-btn" id="listenBtn" onclick="toggleListening()" title="在此裝置收聽音樂">
+                    <span class="listen-icon" id="listenIcon">🎧</span>
+                    <span class="listen-text" id="listenText">點擊收聽</span>
+                </button>
+                <div class="listen-volume hidden" id="listenVolumeWrap">
+                    <span class="listen-vol-icon">🔉</span>
+                    <input type="range" id="listenVolumeSlider" min="0" max="100" value="80"
+                           class="volume-slider listen-vol-slider" oninput="setListenVolume(this.value)">
+                    <span class="listen-vol-value" id="listenVolumeValue">80</span>
+                </div>
+            </div>
         </section>
 
         <!-- 歌曲佇列 -->
@@ -147,6 +160,6 @@
     <!-- Toast 通知容器 -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <script src="/static/app.js?v=20260430a"></script>
+    <script src="/static/app.js?v=20260503a"></script>
 </body>
 </html>
